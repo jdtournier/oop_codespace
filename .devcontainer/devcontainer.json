@@ -1,0 +1,17 @@
+{ 
+    "image":"mcr.microsoft.com/devcontainers/universal:2",
+    
+    "customizations": {
+        "vscode": {
+            "settings": { "terminal.integrated.enableImages": true },
+            "extensions": ["ms-vscode.cpptools"]
+        }
+    },
+
+    "remoteEnv": {
+        "WHITEBG": "1",
+        "PATH": "${containerEnv:PATH}:/workspaces/oop_codespace/.bin"
+    }
+
+}
+
