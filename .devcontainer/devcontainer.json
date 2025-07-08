@@ -3,7 +3,18 @@
     
     "customizations": {
         "vscode": {
-            "settings": { "terminal.integrated.enableImages": true },
+            "settings": { 
+                "terminal.integrated.enableImages": true,
+		"git.autoRepositoryDetection": false,
+                "extensions.ignoreRecommendations": true,
+                "workbench.remoteIndicator.showExtensionRecommendations": false,
+                "window.menuBarVisibility": "classic",
+                "extensions.allowed": {
+                    "ms-vscode.cpptools": true,
+                    "github.codespaces": true,
+                    "github.github-vscode-theme": true
+                }
+             },
             "extensions": ["ms-vscode.cpptools"]
         }
     },
@@ -14,4 +25,5 @@
     }
 
 }
+
 

@@ -1,17 +1,5 @@
 #!/bin/bash 
 
-if [[ ! -z "$ZSH_VERSION" ]]; then 
-  setopt SH_WORD_SPLIT
-elif [[ ! -z "$BASH_VERSINFO" ]]; then
-  if [[ ${BASH_VERSINFO[0]} < 4 ]]; then 
-    # try running in ZSH:
-    zsh "$0" "$@"
-    exit $?
-  fi
-else
-  echo "WARNING: this script is only supported on bash or zsh!"
-fi
-
 function usage {
   cat <<'EOD'
 
@@ -118,6 +106,9 @@ cxx=${CXX:-g++}
 # set default C++ language standard:
 std=${CXXSTD:-c++17}
 
+# name of build log file:
+LOG="build_log.txt"
+
 declare -A description
 declare -A cflags
 declare -A ldflags
@@ -132,9 +123,6 @@ ldflags['release']=""
 description['debug']="create build suitable for debugging"
 cflags['debug']="-D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC -g"
 ldflags['debug']="-g"
-
-# command to run to display compiler output on error:
-display_error="less -X"
 
 # maximum number of compile jobs to run concurrently:
 # default to number of cores on system, as reported by 'nproc'
@@ -163,7 +151,6 @@ if [ -f settings.sh ]; then
   . settings.sh
 fi
 
-rm -f build_log.txt
 
 
 
@@ -171,21 +158,28 @@ rm -f build_log.txt
 # FUNCTIONS
 #######################################
 
+log() {
+  # print to build log:
+  echo "$@" >> "$LOG"
+}
+
 report() {
   # print to stderr:
-  >&2 echo $@
+  log "$@"
+  >&2 echo "$@"
 }
 
 
 error() {
   # print to stderr and exit:
-  >&2 echo ERROR: $@
+  log "ERROR: $@"
+  >&2 echo ERROR: "$@"
   exit 1
 }
 
 debug() {
   if [ ! $verbose -eq 0 ]; then
-    report '#' $@
+    report "# $@"
   fi
 }
 
@@ -229,11 +223,7 @@ compile() {
   cmd="$cxx ${cflags[$config]} -std=$std -I. -c $1 -o $2"
   report "[CC]" $cmd
   ( 
-    if ! $cmd 2> build_log.txt ; then
-      $display_error build_log.txt
-      return 1
-    fi
-    [[ -s build_log.txt ]] && cat build_log.txt || :
+    $cmd || error "command \"$cmd\" failed"
   ) &
 }
 
@@ -247,11 +237,7 @@ link() {
   mkdir -p $(dirname $exe)
   cmd="$cxx ${ldflags[$config]} $@ -o $exe"
   report "[LD]" $cmd
-  if ! $cmd 2> build_log.txt ; then
-    $display_error build_log.txt
-    return 1
-  fi
-  [[ -s build_log.txt ]] && cat build_log.txt || :
+  $cmd || error "command \"$cmd\" failed" 
 }
 
 
@@ -270,11 +256,7 @@ contains_main() {
 get_targets() {
   # figure out target executable based on which cpp file contains main():
   [[ ${#targets[@]} -gt 0 ]] && return;
-  if [[ -z "$ZSH_VERSION" ]]; then 
-      shopt -s nullglob
-  else
-      set -o nullglob
-  fi
+  shopt -s nullglob
   for f in *.cpp; do
     contains_main $f && targets+=( "${f%.cpp}" ) || :
   done
@@ -371,16 +353,12 @@ scan_deps_for_target() {
 
 
 clean() {
-  if [[ -z "$ZSH_VERSION" ]]; then 
-      shopt -s nullglob
-  else
-      set -o nullglob
-  fi
-
-  for b in build.*; do
-    echo "removing build folder \"$b\"..."
-    rm -rf $b
+  to_delete=( $(find . -name "*.o") )
+  for f in *.cpp; do
+    [ -x "${f%.cpp}" ] && to_delete+=( "${f%.cpp}" )
   done
+  [ -f "$LOG" ] && to_delete+=( "$LOG" )
+  [ ${#to_delete[@]} -gt 0 ] && rm -vrf "${to_delete[@]}"
 }
 
 
@@ -393,7 +371,7 @@ while [ $# -gt 0 ]; do
     "-verbose")
       verbose=1
       ;;
-    "help")
+    "-help")
       usage
       exit 0
       ;;
@@ -401,25 +379,40 @@ while [ $# -gt 0 ]; do
       clean
       exit 0
       ;;
-    *)
+    "-config")
+      shift
       if [[ -z ${cflags["$1"]} ]]; then 
         error "unknown build configuration: \"$1\""
         exit 1
       fi
       config="$1"
       ;;
+    *)
+      targets+=( "$1" )
+      ;;
   esac
   shift
 done
 
 
-# default to 'release' build if unspecified:
+# default to 'debug' build if unspecified:
 if [[ -z $config ]]; then
-  config=release
+  config=debug
 fi
 
+# check which config was last used, and clean first if different:
+if [ -s "$LOG" ]; then
+  while read line; do 
+    [[ "$line" == "config: "* ]] && { previous_config="${line#config:\ }"; break; }
+  done < "$LOG"
+  if [ "$previous_config" != $config ]; then
+    report "NOTE: building using different configuration from last invocation - will clean first..."
+    clean
+  fi
+fi
 
-
+rm -f "$LOG"
+log "config: $config"
 
 
 #######################################
@@ -444,16 +437,16 @@ done
 debug using $njobs jobs
 
 # compile and link all targets (unless cleaning):
-buildir="build.$config"
 for exe in ${targets[@]}; do
   objlist=""
   for cpp in ${objects[$exe]}; do
-    obj="$buildir/${cpp%.*}.o"
+    obj="${cpp%.*}.o"
     objlist+="$obj "
-    check_need_update "$buildir/${cpp%.*}.o" ${deps[$cpp]} || compile $cpp $obj
+    check_need_update "$obj" ${deps[$cpp]} || compile $cpp $obj
   done
   wait $(jobs -p)
-  check_need_update "$buildir/$exe" $objlist || link $buildir/$exe $objlist
+  check_need_update "$exe" $objlist || link $exe $objlist
 done
+
 
 
